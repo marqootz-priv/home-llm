@@ -1,7 +1,6 @@
-"""ElevenLabs TTS per agent; cache by text hash; 400ms silence between turns; fallback to pyttsx3."""
+"""ElevenLabs TTS per agent; cache by text hash; fallback to pyttsx3."""
 import hashlib
 import logging
-from concurrent.futures import ThreadPoolExecutor
 
 from config import ELEVENLABS_API_KEY, LEON_VOICE_ID, MATILDA_VOICE_ID
 
@@ -9,11 +8,6 @@ logger = logging.getLogger("ensemble.tts")
 
 # Cache: text_hash -> audio bytes
 _audio_cache: dict[str, bytes] = {}
-_executor = ThreadPoolExecutor(max_workers=2)
-
-# 400ms silence at 44.1kHz mono 128kbps MP3 is ~6400 bytes of silence (approx)
-# MP3 frame ~26ms; 400ms ≈ 15 frames. Use a short silent MP3 blob.
-_SILENCE_400MS_MP3 = b"\xff\xfb\x90\x00" * 200  # placeholder; real silence would be proper MP3 frames
 
 
 def _get_voice_id(agent_id: str) -> str:
@@ -94,17 +88,10 @@ def render(text: str, agent_id: str, use_fallback: bool = False) -> bytes:
     return audio
 
 
-def silence_400ms() -> bytes:
-    """Return ~400ms of silence for gap between agent turns. Simple MP3 silence frame."""
-    # Minimal silent MP3: one frame of silence is ~417 bytes at 128kbps; 400ms ≈ 15 frames
-    # Use a known-good silent MP3 snippet (hex) or generate. For portability use zeros that decode as silence.
-    return b"\xff\xfb\x90\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" * 50
-
-
 def build_audio_queue(turns: list[tuple[str, str]], use_fallback: bool = False) -> bytes:
-    """Build concatenated audio: for each (agent_id, text), render then append 400ms silence."""
+    """Build concatenated audio for each (agent_id, text) in turns."""
     chunks: list[bytes] = []
-    for i, (agent_id, text) in enumerate(turns):
+    for agent_id, text in turns:
         if text and text.strip():
             try:
                 chunks.append(render(text, agent_id, use_fallback=use_fallback))
@@ -114,6 +101,4 @@ def build_audio_queue(turns: list[tuple[str, str]], use_fallback: bool = False) 
                     chunks.append(_render_pyttsx3(text))
                 except Exception:
                     pass
-        if i < len(turns) - 1:
-            chunks.append(silence_400ms())
     return b"".join(chunks)

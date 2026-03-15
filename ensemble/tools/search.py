@@ -15,11 +15,8 @@ def _search_brave(query: str) -> list[dict]:
         )
         r.raise_for_status()
         data = r.json()
-    web = data.get("web", {}) or data.get("results", [])
-    if isinstance(web, dict):
-        results = web.get("results", [])[:3]
-    else:
-        results = (web or [])[:3]
+    web = data.get("web") or {}
+    results = (web.get("results") or [])[:3]
     return [
         {"title": r.get("title", ""), "snippet": r.get("description", r.get("snippet", "")), "url": r.get("url", "")}
         for r in results

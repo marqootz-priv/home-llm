@@ -14,6 +14,9 @@ from conversation import ConversationState
 from agent import get_leon, get_matilda
 from tools.memory import remember
 
+# Module-level client for routing classification (reused across turns)
+_routing_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, http_client=httpx.Client(timeout=60.0))
+
 ROUTING_PROMPT = """You classify the user's query for a two-agent system.
 - Matilda: home control, scheduling, daily tasks, weather, reminders, execution, real-time info.
 - Leon: research, science, medicine, design, UX, coding, technical exploration, creative planning, synthesis.
@@ -34,19 +37,17 @@ def _get_memory_context() -> str:
 def _addressed_agent(text: str) -> str | None:
     """If Mark addressed an agent by name, return that agent id else None."""
     t = text.strip().lower()
-    if t.startswith("matilda") or " matilda " in t or t.startswith("hey matilda"):
+    if re.search(r"\bmatilda\b", t):
         return MATILDA_ID
-    if t.startswith("leon") or " leon " in t or t.startswith("hey leon"):
+    if re.search(r"\bleon\b", t):
         return LEON_ID
     return None
 
 
 def _classification_scores(user_text: str) -> dict[str, float]:
     """Lightweight Claude call, no tools, returns matilda/leon/shared scores."""
-    # Use explicit httpx.Client so Anthropic doesn't pass deprecated proxies= (incompatible with httpx 0.28+)
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, http_client=httpx.Client(timeout=60.0))
     try:
-        r = client.messages.create(
+        r = _routing_client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=80,
             system=ROUTING_PROMPT,
@@ -68,14 +69,14 @@ def _classification_scores(user_text: str) -> dict[str, float]:
     return {"matilda": 0.5, "leon": 0.5, "shared": 0.5}
 
 
-def _route(user_text: str) -> tuple[str, bool]:
+def _route(user_text: str) -> tuple[str, bool, dict[str, float]]:
     """
-    Returns (active: "matilda"|"leon"|"both", deliberating: bool).
+    Returns (active: "matilda"|"leon"|"both", deliberating: bool, scores: dict).
     Direct route = one agent, not deliberating. Deliberation = both, deliberating.
     """
     addressed = _addressed_agent(user_text)
     if addressed:
-        return (addressed, False)
+        return (addressed, False, {})
 
     scores = _classification_scores(user_text)
     matilda = scores.get("matilda", 0)
@@ -83,16 +84,16 @@ def _route(user_text: str) -> tuple[str, bool]:
     shared = scores.get("shared", 0)
 
     if shared >= 0.4:
-        return ("both", True)
+        return ("both", True, scores)
     if abs(matilda - leon) <= 0.2:
-        return ("both", True)
+        return ("both", True, scores)
     if matilda > leon and matilda >= 0.75:
-        return (MATILDA_ID, False)
+        return (MATILDA_ID, False, scores)
     if leon > matilda and leon >= 0.75:
-        return (LEON_ID, False)
+        return (LEON_ID, False, scores)
     if matilda >= leon:
-        return (MATILDA_ID, False)
-    return (LEON_ID, False)
+        return (MATILDA_ID, False, scores)
+    return (LEON_ID, False, scores)
 
 
 def run_turn(
@@ -107,7 +108,7 @@ def run_turn(
     memory_context = _get_memory_context()
     transcript = state.transcript_for_agents()
 
-    active, deliberating = _route(mark_input)
+    active, deliberating, scores = _route(mark_input)
     state.context.active_agent = active
     state.context.deliberating = deliberating
     state.context.topic = mark_input[:100]
@@ -153,8 +154,17 @@ def run_turn(
     state.append(LEON_ID, leon_text)
     turns_out.append((LEON_ID, leon_text))
 
-    # Resolution: ask Matilda to produce final consolidated response (she's operator) or Leon if it's research-heavy.
-    # We use Matilda to consolidate and run tools if needed.
+    # Resolution: route to the higher-scoring agent. Leon owns research-heavy topics;
+    # Matilda owns execution/home-control-heavy topics. Tied or shared → Matilda as operator.
+    leon_score = scores.get("leon", 0)
+    matilda_score = scores.get("matilda", 0)
+    if leon_score > matilda_score:
+        final_agent = get_leon()
+        final_agent_id = LEON_ID
+    else:
+        final_agent = get_matilda()
+        final_agent_id = MATILDA_ID
+
     resolve_prompt = (
         f"Conversation:\n{transcript}\n\n"
         f"Matilda said: {matilda_text}\nLeon said: {leon_text}\n\n"
@@ -163,10 +173,9 @@ def run_turn(
         "If the question is not yet fully answered, give the missing part. Output only what you say to Mark — no reasoning. Speak directly: "
         + mark_input
     )
-    final_agent = get_matilda()  # default consolidator; could switch based on content
     final_text = final_agent.run(user_message=resolve_prompt, memory_context=memory_context)
-    state.append(MATILDA_ID, final_text)
-    turns_out.append((MATILDA_ID, final_text))
+    state.append(final_agent_id, final_text)
+    turns_out.append((final_agent_id, final_text))
 
     state.context.deliberating = False
     state.context.awaiting_mark = False
