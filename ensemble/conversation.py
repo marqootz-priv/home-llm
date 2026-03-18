@@ -60,10 +60,16 @@ class ConversationState:
             "context": self.context.to_dict(),
         }
 
-    def transcript_for_agents(self) -> str:
-        """Full transcript as a string for agent context."""
+    def transcript_for_agents(self, max_turns: int | None = None) -> str:
+        """
+        Transcript as a string for agent context.
+        If max_turns is set, only the last max_turns turns are included (caps token growth).
+        """
+        turns = self.turns
+        if max_turns is not None and max_turns > 0 and len(turns) > max_turns:
+            turns = turns[-max_turns:]
         lines = []
-        for t in self.turns:
+        for t in turns:
             name = t.speaker.capitalize()
             lines.append(f"{name}: {t.text}")
         return "\n".join(lines) if lines else "(No messages yet.)"

@@ -1,4 +1,5 @@
 """ElevenLabs TTS per agent; cache by text hash; fallback to pyttsx3."""
+import asyncio
 import hashlib
 import logging
 
@@ -89,7 +90,7 @@ def render(text: str, agent_id: str, use_fallback: bool = False) -> bytes:
 
 
 def build_audio_queue(turns: list[tuple[str, str]], use_fallback: bool = False) -> bytes:
-    """Build concatenated audio for each (agent_id, text) in turns."""
+    """Build concatenated audio for each (agent_id, text) in turns (sequential)."""
     chunks: list[bytes] = []
     for agent_id, text in turns:
         if text and text.strip():
@@ -101,4 +102,24 @@ def build_audio_queue(turns: list[tuple[str, str]], use_fallback: bool = False) 
                     chunks.append(_render_pyttsx3(text))
                 except Exception:
                     pass
+    return b"".join(chunks)
+
+
+async def build_audio_queue_async(turns: list[tuple[str, str]], use_fallback: bool = False) -> bytes:
+    """Build concatenated audio in parallel (one task per turn). Preserves order."""
+    if not turns:
+        return b""
+
+    async def render_one(agent_id: str, text: str) -> bytes:
+        if not text or not text.strip():
+            return b""
+        try:
+            return await asyncio.to_thread(render, text, agent_id, use_fallback=use_fallback)
+        except Exception as e:
+            logger.warning("TTS failed for %s: %s", agent_id, e)
+            if use_fallback:
+                return await asyncio.to_thread(_render_pyttsx3, text)
+            return b""
+
+    chunks = await asyncio.gather(*[render_one(a, t) for a, t in turns])
     return b"".join(chunks)

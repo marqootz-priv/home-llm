@@ -58,6 +58,8 @@ Shared domains (health, creative projects, travel, news) trigger **deliberation*
    ```
    Logs: `~/Library/Logs/ensemble.log`.
 
+7. **Seed memory (optional):** Edit `data/seed_mark_profile.json` with `seed_memories` (key/value pairs). On startup the app loads these into the shared memory store with `speaker=system`. You can also run `python load_seed_memory.py` once to load or refresh.
+
 ## API
 
 - **POST /v1/chat/completions**  
@@ -67,6 +69,9 @@ Shared domains (health, creative projects, travel, news) trigger **deliberation*
 
 - **GET /health**  
   Returns `{"status": "ok"}`.
+
+- **WebSocket /ws/state**  
+  Subscribers receive JSON state after each turn: `active_agent`, `deliberating`, `awaiting_mark`, `topic`. For future use (e.g. USB serial bridge to AtomS3R / Leon's face device).
 
 ## Environment variables
 

@@ -47,7 +47,7 @@ def remember(
                 if not key or value is None:
                     return {"ok": False, "error": "store requires key and value"}
                 sp = (speaker or "matilda").strip().lower()
-                if sp not in ("matilda", "leon"):
+                if sp not in ("matilda", "leon", "system"):
                     sp = "matilda"
                 now = datetime.now(timezone.utc).isoformat()
                 conn.execute(
